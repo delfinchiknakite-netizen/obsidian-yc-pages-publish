@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-release:
@@ -30,11 +32,18 @@ jobs:
             echo "Tag ($tag) != manifest version ($ver)"; exit 1
           fi
 
+      # Провенанс сборки: доказывает, что main.js собран из этого репозитория
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: main.js
+
+      # Obsidian скачивает только main.js и manifest.json (+styles.css при наличии)
       - name: Create GitHub release with plugin assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          gh release create "$tag" main.js manifest.json versions.json \
+          gh release create "$tag" main.js manifest.json \
             --title "$tag" --notes "Automated release $tag" \
-          || gh release upload "$tag" main.js manifest.json versions.json --clobber
+          || gh release upload "$tag" main.js manifest.json --clobber

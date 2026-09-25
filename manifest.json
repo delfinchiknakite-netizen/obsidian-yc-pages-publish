@@ -1,7 +1,7 @@
 {
   "id": "yc-pages-publish",
   "name": "YC Pages Publish",
-  "version": "3.2.0",
+  "version": "1.0.0",
   "minAppVersion": "1.4.0",
   "description": "Publish notes and folders as temporary (TTL) websites on Yandex Cloud Object Storage — with images, folder navigation, filters and QR codes.",
   "author": "avtarasov210",

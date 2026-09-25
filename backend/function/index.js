@@ -87,7 +87,7 @@ async function createPage(body) {
   const pageUrl = `${SITE_URL}/${prefix}`;
 
   const content = html != null ? html : md.render(markdown);
-  await putHtml(prefix + 'index.html', renderPage(title, content, css));
+  await putHtml(prefix + 'index.html', renderPage(title, content, css, body.head));
   await manifestAdd({ type: 'page', slug, title, ttl, url: pageUrl, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() });
 
   return resp(200, { url: pageUrl, expiresAt: expiresAt.toISOString(), uploads: presignAssets(images, prefix + 'assets/') });
@@ -140,7 +140,7 @@ async function createSitePage(body) {
   const back = '<p><a href="../">← к списку</a></p>';
 
   const content = html != null ? html : md.render(markdown);
-  await putHtml(prefix + 'index.html', renderPage(title || slug, back + content, css));
+  await putHtml(prefix + 'index.html', renderPage(title || slug, back + content, css, body.head));
 
   return resp(200, { url: pageUrl, uploads: presignAssets(images, prefix + 'assets/') });
 }
@@ -185,7 +185,7 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function renderPage(title, contentHtml, extraCss) {
+function renderPage(title, contentHtml, extraCss, extraHead) {
   return `<!doctype html>
 <html lang="ru">
 <head>
@@ -201,6 +201,7 @@ function renderPage(title, contentHtml, extraCss) {
   a{color:#0a58ca}
 ${extraCss || ''}
 </style>
+${extraHead || ''}
 </head>
 <body>
 ${contentHtml}

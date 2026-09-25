@@ -2503,6 +2503,273 @@ var TASKS_MODULE = (function () {
 })();
 
 
+/* render module: modules/callouts.js */
+// Render module: Obsidian callouts (> [!note] ...) → красивые боксы.
+var CALLOUTS_MODULE = (function () {
+  var ICON = {
+    note: 'ℹ️', info: 'ℹ️', abstract: '📄', summary: '📄', tldr: '📄',
+    tip: '💡', hint: '💡', important: '💡',
+    success: '✅', check: '✅', done: '✅',
+    question: '❓', help: '❓', faq: '❓',
+    warning: '⚠️', caution: '⚠️', attention: '⚠️',
+    failure: '❌', fail: '❌', missing: '❌',
+    danger: '🛑', error: '🛑', bug: '🐞',
+    example: '📋', quote: '❝', cite: '❝', todo: '☑️'
+  };
+  var COLOR = {
+    note: '#448aff', info: '#448aff', abstract: '#00b0ff', summary: '#00b0ff', tldr: '#00b0ff',
+    tip: '#00bfa5', hint: '#00bfa5', important: '#00bfa5',
+    success: '#2ec16b', check: '#2ec16b', done: '#2ec16b',
+    question: '#e6b800', help: '#e6b800', faq: '#e6b800',
+    warning: '#e08d00', caution: '#e08d00', attention: '#e08d00',
+    failure: '#e5484d', fail: '#e5484d', missing: '#e5484d',
+    danger: '#e5484d', error: '#e5484d', bug: '#e5484d',
+    example: '#7c4dff', quote: '#9e9e9e', cite: '#9e9e9e', todo: '#448aff'
+  };
+  function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+  return {
+    id: 'callouts',
+    postprocessHtml: function (html) {
+      return html.replace(/<blockquote>\s*([\s\S]*?)<\/blockquote>/g, function (whole, inner) {
+        var m = inner.match(/^\s*<p>\s*\[!([\w-]+)\][+-]?\s*([^\n<]*)/);
+        if (!m) return whole;
+        var type = m[1].toLowerCase();
+        var title = m[2].trim();
+        var color = COLOR[type] || '#448aff';
+        var icon = ICON[type] || 'ℹ️';
+        var bodyHtml = inner.replace(/^\s*<p>\s*\[![\w-]+\][+-]?\s*[^\n<]*(<br>\s*\n?)?/, '<p>');
+        bodyHtml = bodyHtml.replace(/<p>\s*<\/p>/g, '');
+        return '<div class="ycp-callout" style="--cc:' + color + '">' +
+          '<div class="ycp-callout-title"><span class="ycp-callout-ic">' + icon + '</span>' + (title || cap(type)) + '</div>' +
+          (bodyHtml.trim() ? '<div class="ycp-callout-body">' + bodyHtml + '</div>' : '') +
+          '</div>';
+      });
+    },
+    css: [
+      '.ycp-callout{border:1px solid #e6e6e6;border-left:4px solid var(--cc,#448aff);border-radius:8px;padding:10px 14px;margin:1em 0;background:color-mix(in srgb,var(--cc,#448aff) 7%,#fff)}',
+      '.ycp-callout-title{font-weight:700;color:var(--cc,#448aff);display:flex;align-items:center;gap:8px}',
+      '.ycp-callout-ic{font-size:1.05em}',
+      '.ycp-callout-body{margin-top:4px}',
+      '.ycp-callout-body>p:first-child{margin-top:0}',
+      '.ycp-callout-body>p:last-child{margin-bottom:0}'
+    ].join('')
+  };
+})();
+
+
+/* render module: modules/kanban.js */
+// Render module: доски Kanban → колонки с карточками.
+var KANBAN_MODULE = (function () {
+  var md = (typeof markdownit !== 'undefined') ? markdownit({ html: false, linkify: true, breaks: true }) : null;
+  function inline(s) { return md ? md.renderInline(s) : String(s).replace(/[&<>]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]; }); }
+
+  function isKanban(markdown, ctx) {
+    if (ctx && ctx.frontmatter && ctx.frontmatter['kanban-plugin']) return true;
+    return markdown.indexOf('kanban:settings') >= 0;
+  }
+
+  return {
+    id: 'kanban',
+    renderFull: function (markdown, ctx) {
+      if (!isKanban(markdown, ctx)) return null;
+      // выкинуть служебный блок настроек
+      var body = markdown.replace(/%%[\s\S]*?kanban:settings[\s\S]*?%%/g, '').trim();
+      var lines = body.split('\n');
+      var columns = [];
+      var cur = null;
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        var h = line.match(/^##\s+(.*)$/);
+        if (h) { cur = { title: h[1].trim(), cards: [] }; columns.push(cur); continue; }
+        var item = line.match(/^\s*-\s*(?:\[( |x|X)\]\s*)?(.*)$/);
+        if (item && cur) {
+          var txt = item[2].trim();
+          if (txt === '' || /^\*\*.*\*\*$/.test(txt) && txt.indexOf('Complete') >= 0) { /* skip */ }
+          cur.cards.push({ done: /[xX]/.test(item[1] || ''), text: txt });
+        }
+      }
+      if (!columns.length) return null;
+      var cols = columns.map(function (c) {
+        var cards = c.cards.filter(function (x) { return x.text; }).map(function (x) {
+          return '<div class="ycp-kcard' + (x.done ? ' done' : '') + '">' +
+            (x.done ? '<span class="ycp-kdone">✓</span>' : '') + '<span>' + inline(x.text) + '</span></div>';
+        }).join('');
+        return '<div class="ycp-kcol"><div class="ycp-kcol-h">' + inline(c.title) +
+          ' <span class="ycp-kcnt">' + c.cards.filter(function (x) { return x.text; }).length + '</span></div>' + cards + '</div>';
+      }).join('');
+      return '<div class="ycp-kanban">' + cols + '</div>';
+    },
+    css: [
+      '.ycp-kanban{display:flex;gap:12px;overflow-x:auto;padding:6px 0;align-items:flex-start}',
+      '.ycp-kcol{flex:0 0 240px;background:#f4f5f7;border-radius:10px;padding:8px}',
+      '.ycp-kcol-h{font-weight:700;padding:4px 6px 8px;display:flex;align-items:center;gap:6px}',
+      '.ycp-kcnt{font-size:12px;color:#888;background:#e2e5e9;border-radius:20px;padding:0 7px}',
+      '.ycp-kcard{background:#fff;border:1px solid #e3e6ea;border-radius:8px;padding:8px 10px;margin:6px 0;box-shadow:0 1px 1px rgba(0,0,0,.04);display:flex;gap:7px;align-items:flex-start}',
+      '.ycp-kcard.done{opacity:.6}',
+      '.ycp-kcard.done>span:last-child{text-decoration:line-through}',
+      '.ycp-kdone{color:#2ec16b;font-weight:700}'
+    ].join('')
+  };
+})();
+
+
+/* render module: modules/dataview.js */
+// Render module: Dataview — выполняет запрос ВО ВРЕМЯ публикации (через Dataview API)
+// и вставляет статический результат. Требует установленный Dataview.
+var DATAVIEW_MODULE = (function () {
+  var md = (typeof markdownit !== 'undefined') ? markdownit({ html: false, linkify: true, breaks: true }) : null;
+  function renderMd(s) { return md ? md.render(s) : ('<pre>' + String(s) + '</pre>'); }
+
+  function getApi(ctx) {
+    var p = ctx.app && ctx.app.plugins && ctx.app.plugins.plugins && ctx.app.plugins.plugins.dataview;
+    return p && p.api ? p.api : null;
+  }
+
+  return {
+    id: 'dataview',
+    preprocess: async function (markdown, ctx) {
+      if (markdown.indexOf('```dataview') < 0) return markdown;
+      var api = getApi(ctx);
+
+      // dataviewjs — статически не выполняем
+      markdown = markdown.replace(/```dataviewjs\s*\n[\s\S]*?```/g, function () {
+        return '\n\n' + ctx.hold('<div class="ycp-dv-note">⚠️ dataviewjs не поддерживается на статическом сайте</div>') + '\n\n';
+      });
+
+      if (!api) {
+        return markdown.replace(/```dataview\s*\n[\s\S]*?```/g, function () {
+          return '\n\n' + ctx.hold('<div class="ycp-dv-note">⚠️ Dataview недоступен при публикации</div>') + '\n\n';
+        });
+      }
+
+      var blocks = [];
+      markdown.replace(/```dataview\s*\n([\s\S]*?)```/g, function (whole, q) { blocks.push({ whole: whole, q: q }); return whole; });
+      for (var i = 0; i < blocks.length; i++) {
+        var b = blocks[i];
+        var htmlOut;
+        try {
+          var res = await api.queryMarkdown(b.q, ctx.sourcePath || '');
+          if (res && res.successful) htmlOut = '<div class="ycp-dataview">' + renderMd(res.value) + '</div>';
+          else htmlOut = '<div class="ycp-dv-note">Dataview: ' + (res && res.error ? res.error : 'ошибка') + '</div>';
+        } catch (e) {
+          htmlOut = '<div class="ycp-dv-note">Dataview error: ' + String(e && e.message || e) + '</div>';
+        }
+        markdown = markdown.replace(b.whole, '\n\n' + ctx.hold(htmlOut) + '\n\n');
+      }
+      return markdown;
+    },
+    css: [
+      '.ycp-dataview table{border-collapse:collapse;width:100%;margin:.5em 0}',
+      '.ycp-dataview th,.ycp-dataview td{border:1px solid #e3e6ea;padding:6px 10px;text-align:left}',
+      '.ycp-dataview th{background:#f4f5f7}',
+      '.ycp-dv-note{background:#fff7e6;border:1px solid #ffe1a8;border-radius:8px;padding:8px 12px;color:#8a6d1a;margin:1em 0}'
+    ].join('')
+  };
+})();
+
+
+/* render module: modules/excalidraw.js */
+// Render module: Excalidraw — встроенные рисунки ![[Название.excalidraw]] экспортируются
+// в SVG во время публикации (через ExcalidrawAutomate API) и вставляются инлайн.
+var EXCALIDRAW_MODULE = (function () {
+  var EMBED_RE = /!\[\[([^\]|]+?\.excalidraw)(?:\.md)?(?:\|([^\]]*))?\]\]/g;
+
+  function getEA(ctx) {
+    var p = ctx.app && ctx.app.plugins && ctx.app.plugins.plugins && ctx.app.plugins.plugins['obsidian-excalidraw-plugin'];
+    if (!p) return null;
+    return p.ea || (typeof window !== 'undefined' && window.ExcalidrawAutomate) || null;
+  }
+
+  async function toSvg(ea, file, ctx) {
+    // разные версии плагина — пробуем известные сигнатуры createSVG
+    if (ea && typeof ea.reset === 'function') { try { ea.reset(); } catch (e) {} }
+    var svg = null;
+    if (ea && typeof ea.createSVG === 'function') {
+      try { svg = await ea.createSVG(file.path, false, {}, null, 'light', 8); }
+      catch (e1) {
+        try { svg = await ea.createSVG(file.path); } catch (e2) {}
+      }
+    }
+    if (svg && svg.outerHTML) {
+      // подчистим фиксированные размеры, чтобы вписывался
+      try { svg.removeAttribute('width'); svg.removeAttribute('height'); svg.style.maxWidth = '100%'; svg.style.height = 'auto'; } catch (e) {}
+      return svg.outerHTML;
+    }
+    return null;
+  }
+
+  return {
+    id: 'excalidraw',
+    preprocess: async function (markdown, ctx) {
+      if (markdown.indexOf('.excalidraw') < 0) return markdown;
+      var ea = getEA(ctx);
+      var app = ctx.app;
+      var matches = [];
+      markdown.replace(EMBED_RE, function (whole, link) { matches.push({ whole: whole, link: link }); return whole; });
+
+      for (var i = 0; i < matches.length; i++) {
+        var mm = matches[i];
+        var out;
+        try {
+          var dest = app && app.metadataCache.getFirstLinkpathDest(mm.link, ctx.sourcePath || '');
+          if (dest && ea) {
+            var svgHtml = await toSvg(ea, dest, ctx);
+            out = svgHtml ? '<figure class="ycp-excalidraw">' + svgHtml + '</figure>'
+              : '<div class="ycp-dv-note">✏️ Не удалось экспортировать рисунок: ' + mm.link + '</div>';
+          } else {
+            out = '<div class="ycp-dv-note">✏️ Excalidraw недоступен: ' + mm.link + '</div>';
+          }
+        } catch (e) {
+          out = '<div class="ycp-dv-note">Excalidraw error: ' + String(e && e.message || e) + '</div>';
+        }
+        markdown = markdown.replace(mm.whole, '\n\n' + ctx.hold(out) + '\n\n');
+      }
+      return markdown;
+    },
+    css: [
+      '.ycp-excalidraw{margin:1em 0;text-align:center}',
+      '.ycp-excalidraw svg{max-width:100%;height:auto;border:1px solid #eee;border-radius:8px;background:#fff}'
+    ].join('')
+  };
+})();
+
+
+/* render module: modules/math.js */
+// Render module: LaTeX-математика ($...$, $$...$$) через KaTeX (auto-render с CDN).
+// Защищает формулы от markdown-it (плейсхолдеры) и добавляет KaTeX в <head> страницы.
+var MATH_MODULE = (function () {
+  var KX = 'https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/';
+  var HEAD = [
+    '<link rel="stylesheet" href="' + KX + 'katex.min.css">',
+    '<script defer src="' + KX + 'katex.min.js"></script>',
+    '<script defer src="' + KX + 'contrib/auto-render.min.js" onload="renderMathInElement(document.body,{delimiters:[{left:\'$$\',right:\'$$\',display:true},{left:\'$\',right:\'$\',display:false}],throwOnError:false})"></script>'
+  ].join('\n');
+
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]; }); }
+
+  return {
+    id: 'math',
+    preprocess: function (markdown, ctx) {
+      var found = false;
+      // display $$...$$
+      var out = markdown.replace(/\$\$([\s\S]+?)\$\$/g, function (m, body) {
+        found = true;
+        return ctx.hold('<div class="ycp-math-display">$$' + esc(body) + '$$</div>');
+      });
+      // inline $...$ (не пустое, без переносов, не задевает $$)
+      out = out.replace(/(^|[^\\$])\$(?!\s)([^\n$]+?)(?<!\s)\$(?!\$)/g, function (m, pre, body) {
+        found = true;
+        return pre + ctx.hold('<span class="ycp-math">$' + esc(body) + '$</span>');
+      });
+      if (found) ctx.addHead(HEAD);
+      return out;
+    },
+    css: '.ycp-math-display{overflow-x:auto;margin:1em 0}'
+  };
+})();
+
+
 /* ===== plugin ===== */
 const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, TFolder, requestUrl } = require('obsidian');
 
@@ -2595,8 +2862,15 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   // ---- рендер HTML внутри плагина + реестр модулей ----
   setupRenderer() {
     this.renderModules = [];
-    if (typeof CHORDS_MODULE !== 'undefined') this.renderModules.push(CHORDS_MODULE);
-    if (typeof TASKS_MODULE !== 'undefined') this.renderModules.push(TASKS_MODULE);
+    const add = (m) => { if (typeof m !== 'undefined' && m) this.renderModules.push(m); };
+    // порядок: fence/postprocess нейтральны; preprocess идёт dataview→excalidraw→math
+    add(typeof CHORDS_MODULE !== 'undefined' ? CHORDS_MODULE : undefined);
+    add(typeof TASKS_MODULE !== 'undefined' ? TASKS_MODULE : undefined);
+    add(typeof CALLOUTS_MODULE !== 'undefined' ? CALLOUTS_MODULE : undefined);
+    add(typeof KANBAN_MODULE !== 'undefined' ? KANBAN_MODULE : undefined);
+    add(typeof DATAVIEW_MODULE !== 'undefined' ? DATAVIEW_MODULE : undefined);
+    add(typeof EXCALIDRAW_MODULE !== 'undefined' ? EXCALIDRAW_MODULE : undefined);
+    add(typeof MATH_MODULE !== 'undefined' ? MATH_MODULE : undefined);
 
     const self = this;
     if (typeof markdownit !== 'undefined') {
@@ -2623,15 +2897,52 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     if (mod && this.renderModules) this.renderModules.push(mod);
   }
 
-  // markdown → { html, css } с прогоном через модули
-  renderNote(markdown, ctx) {
-    if (!this.md) return { html: escapeForFallback(markdown), css: '' };
-    let html = this.md.render(markdown || '', ctx || {});
+  aggCss() { return this.renderModules.map((m) => m.css || '').join(''); }
+
+  // markdown → { html, css, head } с прогоном через модули (async)
+  async renderNote(markdown, ctx) {
+    ctx = ctx || {};
+    if (!this.md) return { html: escapeForFallback(markdown), css: '', head: '' };
+
+    // whole-note override (напр. Kanban)
     for (const m of this.renderModules) {
-      if (m.postprocessHtml) html = m.postprocessHtml(html, ctx || {});
+      if (m.renderFull) {
+        try { const h = m.renderFull(markdown, ctx); if (h != null) return { html: h, css: this.aggCss(), head: '' }; }
+        catch (e) { console.warn('[yc-pages] module ' + m.id, e); }
+      }
     }
-    const css = this.renderModules.map((m) => m.css || '').join('');
-    return { html, css };
+
+    // helpers: плейсхолдеры (для async-блоков) и <head>
+    let phi = 0;
+    const ph = {};
+    const heads = [];
+    ctx.hold = (h) => { const id = 'YCPH' + (phi++); ph[id] = h; return '@@' + id + '@@'; };
+    ctx.addHead = (h) => { if (h && heads.indexOf(h) < 0) heads.push(h); };
+
+    // async preprocess (dataview, excalidraw, math)
+    let mdText = markdown || '';
+    for (const m of this.renderModules) {
+      if (m.preprocess) {
+        try { mdText = await m.preprocess(mdText, ctx); }
+        catch (e) { console.warn('[yc-pages] module ' + m.id, e); }
+      }
+    }
+
+    // базовый рендер (sync fence: chords)
+    let html = this.md.render(mdText, ctx);
+
+    // sync postprocess (tasks, callouts)
+    for (const m of this.renderModules) {
+      if (m.postprocessHtml) { try { html = m.postprocessHtml(html, ctx); } catch (e) { console.warn('[yc-pages] module ' + m.id, e); } }
+    }
+
+    // подстановка плейсхолдеров
+    html = html.replace(/<p>@@(YCPH\d+)@@<\/p>/g, (m0, id) => (ph[id] != null ? ph[id] : m0));
+    html = html.replace(/@@(YCPH\d+)@@/g, (m0, id) => (ph[id] != null ? ph[id] : m0));
+
+    const staticHead = this.renderModules.map((m) => m.head || '').filter(Boolean);
+    const head = staticHead.concat(heads).join('\n');
+    return { html, css: this.aggCss(), head };
   }
 
   settingsReady() {
@@ -2667,8 +2978,9 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   async publishNote(file, title, body, ttl, onProgress) {
     await this.ensureBootstrap();
     const { markdown, images } = collectImages(this.app, file, body);
-    const rendered = this.renderNote(markdown);
-    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, ttlDays: ttl, images: images.map(imgMeta) });
+    const cache = this.app.metadataCache.getFileCache(file);
+    const rendered = await this.renderNote(markdown, { app: this.app, sourcePath: file.path, frontmatter: cache && cache.frontmatter });
+    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, head: rendered.head, ttlDays: ttl, images: images.map(imgMeta) });
     if (!r.ok) throw new Error(r.error);
     if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, images, r.data.uploads || []); }
     await this.logLink({ title, url: r.data.url, ttl, expiresAt: r.data.expiresAt });
@@ -2721,7 +3033,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
           const url = siteUrl + dir + slug + '/';
           const { markdown, images } = collectImages(app, f, body);
           noteEntries.push({ title: t, url, meta });
-          pages.push({ dir, slug, title: t, markdown, images });
+          pages.push({ dir, slug, title: t, markdown, images, path: f.path, frontmatter: cache && cache.frontmatter });
         }
 
         for (const sub of subfolders) {
@@ -2746,8 +3058,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
           if (!r.ok) throw new Error('folder ' + fd.dir + ': ' + r.error);
         } else {
           const p = task.data;
-          const rendered = this.renderNote(p.markdown);
-          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, images: p.images.map(imgMeta) });
+          const rendered = await this.renderNote(p.markdown, { app, sourcePath: p.path, frontmatter: p.frontmatter });
+          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, head: rendered.head, images: p.images.map(imgMeta) });
           if (!r.ok) throw new Error('page ' + p.slug + ': ' + r.error);
           if (p.images.length) await uploadAssets(app, p.images, r.data.uploads || []);
         }

@@ -91,8 +91,15 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   // ---- рендер HTML внутри плагина + реестр модулей ----
   setupRenderer() {
     this.renderModules = [];
-    if (typeof CHORDS_MODULE !== 'undefined') this.renderModules.push(CHORDS_MODULE);
-    if (typeof TASKS_MODULE !== 'undefined') this.renderModules.push(TASKS_MODULE);
+    const add = (m) => { if (typeof m !== 'undefined' && m) this.renderModules.push(m); };
+    // порядок: fence/postprocess нейтральны; preprocess идёт dataview→excalidraw→math
+    add(typeof CHORDS_MODULE !== 'undefined' ? CHORDS_MODULE : undefined);
+    add(typeof TASKS_MODULE !== 'undefined' ? TASKS_MODULE : undefined);
+    add(typeof CALLOUTS_MODULE !== 'undefined' ? CALLOUTS_MODULE : undefined);
+    add(typeof KANBAN_MODULE !== 'undefined' ? KANBAN_MODULE : undefined);
+    add(typeof DATAVIEW_MODULE !== 'undefined' ? DATAVIEW_MODULE : undefined);
+    add(typeof EXCALIDRAW_MODULE !== 'undefined' ? EXCALIDRAW_MODULE : undefined);
+    add(typeof MATH_MODULE !== 'undefined' ? MATH_MODULE : undefined);
 
     const self = this;
     if (typeof markdownit !== 'undefined') {
@@ -119,15 +126,52 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     if (mod && this.renderModules) this.renderModules.push(mod);
   }
 
-  // markdown → { html, css } с прогоном через модули
-  renderNote(markdown, ctx) {
-    if (!this.md) return { html: escapeForFallback(markdown), css: '' };
-    let html = this.md.render(markdown || '', ctx || {});
+  aggCss() { return this.renderModules.map((m) => m.css || '').join(''); }
+
+  // markdown → { html, css, head } с прогоном через модули (async)
+  async renderNote(markdown, ctx) {
+    ctx = ctx || {};
+    if (!this.md) return { html: escapeForFallback(markdown), css: '', head: '' };
+
+    // whole-note override (напр. Kanban)
     for (const m of this.renderModules) {
-      if (m.postprocessHtml) html = m.postprocessHtml(html, ctx || {});
+      if (m.renderFull) {
+        try { const h = m.renderFull(markdown, ctx); if (h != null) return { html: h, css: this.aggCss(), head: '' }; }
+        catch (e) { console.warn('[yc-pages] module ' + m.id, e); }
+      }
     }
-    const css = this.renderModules.map((m) => m.css || '').join('');
-    return { html, css };
+
+    // helpers: плейсхолдеры (для async-блоков) и <head>
+    let phi = 0;
+    const ph = {};
+    const heads = [];
+    ctx.hold = (h) => { const id = 'YCPH' + (phi++); ph[id] = h; return '@@' + id + '@@'; };
+    ctx.addHead = (h) => { if (h && heads.indexOf(h) < 0) heads.push(h); };
+
+    // async preprocess (dataview, excalidraw, math)
+    let mdText = markdown || '';
+    for (const m of this.renderModules) {
+      if (m.preprocess) {
+        try { mdText = await m.preprocess(mdText, ctx); }
+        catch (e) { console.warn('[yc-pages] module ' + m.id, e); }
+      }
+    }
+
+    // базовый рендер (sync fence: chords)
+    let html = this.md.render(mdText, ctx);
+
+    // sync postprocess (tasks, callouts)
+    for (const m of this.renderModules) {
+      if (m.postprocessHtml) { try { html = m.postprocessHtml(html, ctx); } catch (e) { console.warn('[yc-pages] module ' + m.id, e); } }
+    }
+
+    // подстановка плейсхолдеров
+    html = html.replace(/<p>@@(YCPH\d+)@@<\/p>/g, (m0, id) => (ph[id] != null ? ph[id] : m0));
+    html = html.replace(/@@(YCPH\d+)@@/g, (m0, id) => (ph[id] != null ? ph[id] : m0));
+
+    const staticHead = this.renderModules.map((m) => m.head || '').filter(Boolean);
+    const head = staticHead.concat(heads).join('\n');
+    return { html, css: this.aggCss(), head };
   }
 
   settingsReady() {
@@ -163,8 +207,9 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   async publishNote(file, title, body, ttl, onProgress) {
     await this.ensureBootstrap();
     const { markdown, images } = collectImages(this.app, file, body);
-    const rendered = this.renderNote(markdown);
-    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, ttlDays: ttl, images: images.map(imgMeta) });
+    const cache = this.app.metadataCache.getFileCache(file);
+    const rendered = await this.renderNote(markdown, { app: this.app, sourcePath: file.path, frontmatter: cache && cache.frontmatter });
+    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, head: rendered.head, ttlDays: ttl, images: images.map(imgMeta) });
     if (!r.ok) throw new Error(r.error);
     if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, images, r.data.uploads || []); }
     await this.logLink({ title, url: r.data.url, ttl, expiresAt: r.data.expiresAt });
@@ -217,7 +262,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
           const url = siteUrl + dir + slug + '/';
           const { markdown, images } = collectImages(app, f, body);
           noteEntries.push({ title: t, url, meta });
-          pages.push({ dir, slug, title: t, markdown, images });
+          pages.push({ dir, slug, title: t, markdown, images, path: f.path, frontmatter: cache && cache.frontmatter });
         }
 
         for (const sub of subfolders) {
@@ -242,8 +287,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
           if (!r.ok) throw new Error('folder ' + fd.dir + ': ' + r.error);
         } else {
           const p = task.data;
-          const rendered = this.renderNote(p.markdown);
-          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, images: p.images.map(imgMeta) });
+          const rendered = await this.renderNote(p.markdown, { app, sourcePath: p.path, frontmatter: p.frontmatter });
+          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, head: rendered.head, images: p.images.map(imgMeta) });
           if (!r.ok) throw new Error('page ' + p.slug + ': ' + r.error);
           if (p.images.length) await uploadAssets(app, p.images, r.data.uploads || []);
         }

@@ -18,14 +18,14 @@ command palette          ─┴─► startPublish(file)
 
 ## Компоненты (main.js)
 
-- **YcPagesPublishPlugin** — регистрирует `file-menu`, команду `publish-active-note`, вкладку настроек.
-- **startPublish(file)** — читает заметку, срезает YAML-frontmatter (`stripFrontmatter`),
+- **YcPagesPublishPlugin** — регистрирует `file-menu`, команду `publish-active-note`, вкладку настроек. 🆔 obsidian-plugin-1
+- **startPublish(file)** — читает заметку, срезает YAML-frontmatter (`stripFrontmatter`), 🆔 obsidian-plugin-2
   берёт заголовок из первого `# H1` или имени файла (`deriveTitle`), открывает модалку.
-- **PublishModal** — поля «Заголовок» и «Время жизни» (7/30/90, предзаполнено настройкой),
+- **PublishModal** — поля «Заголовок» и «Время жизни» (7/30/90, предзаполнено настройкой), 🆔 obsidian-plugin-3
   кнопка «Опубликовать».
-- **doPublish(title, markdown, ttl)** — `requestUrl` (без CORS-проблем) POST на `apiUrl`.
+- **doPublish(title, markdown, ttl)** — `requestUrl` (без CORS-проблем) POST на `apiUrl`. 🆔 obsidian-plugin-4
   Успех → копирует URL в буфер + `Notice`.
-- **YcPagesSettingTab** — настройки: `apiUrl`, `token` (password), `defaultTtl`.
+- **YcPagesSettingTab** — настройки: `apiUrl`, `token` (password), `defaultTtl`. 🆔 obsidian-plugin-5
 
 ## Настройки (data.json)
 
@@ -55,10 +55,10 @@ command palette          ─┴─► startPublish(file)
 
 ## Картинки (`collectImages` / `uploadAssets`)
 
-- Находит `![[embed.png]]` и `![](path.png)` (кроме http и уже-`assets/`), резолвит через
+- Находит `![[embed.png]]` и `![](path.png)` (кроме http и уже-`assets/`), резолвит через 🆔 obsidian-plugin-6
   `metadataCache.getFirstLinkpathDest`, переписывает ссылку на `assets/<safeName>`.
-- Функция возвращает `uploads:[{name, putUrl}]` (presigned PUT, ключи S3 не покидают сервер).
-- Плагин `readBinary` + `requestUrl PUT` заливает бинарники (без CORS-проблем).
+- Функция возвращает `uploads:[{name, putUrl}]` (presigned PUT, ключи S3 не покидают сервер). 🆔 obsidian-plugin-7
+- Плагин `readBinary` + `requestUrl PUT` заливает бинарники (без CORS-проблем). 🆔 obsidian-plugin-8
 
 ## Журнал ссылок (`logLink`)
 
@@ -71,12 +71,12 @@ command palette          ─┴─► startPublish(file)
 ## Рендер HTML в плагине + модули (v1.9)
 
 HTML формируется **в плагине** (не в YC): `renderNote(markdown) → { html, css }`.
-- База — вшитый `markdown-it` (`src/markdown-it.js`, встраивается через build.js).
-- `setupRenderer()` создаёт `this.md` и переопределяет правило `fence`: для каждого
+- База — вшитый `markdown-it` (`src/markdown-it.js`, встраивается через build.js). 🆔 obsidian-plugin-9
+- `setupRenderer()` создаёт `this.md` и переопределяет правило `fence`: для каждого 🆔 obsidian-plugin-10
   ```` ```lang ```` блока опрашивает модули (`m.fence(info, content, ctx)`), первый непустой
   результат подставляется.
-- После рендера прогоняются `m.postprocessHtml(html, ctx)` каждого модуля.
-- `css` всех модулей склеивается и уходит на сервер вместе с `html`; функция кладёт их в
+- После рендера прогоняются `m.postprocessHtml(html, ctx)` каждого модуля. 🆔 obsidian-plugin-11
+- `css` всех модулей склеивается и уходит на сервер вместе с `html`; функция кладёт их в 🆔 obsidian-plugin-12
   `<style>` страницы (`renderPage(title, html, css)`). Markdown как fallback в функции сохранён.
 
 **Интерфейс модуля** (`src/modules/*.js`, каждый — IIFE, кладёт `var XXX_MODULE`):
@@ -88,11 +88,22 @@ HTML формируется **в плагине** (не в YC): `renderNote(mark
 Регистрация: `plugin.registerRenderModule(mod)` (встроенные — в `setupRenderer`).
 Добавить модуль = создать `src/modules/<name>.js`, вписать в `MODULES` в `build.js`, пересобрать.
 
-Встроенные модули:
-- **chords** (`modules/chords.js`) — ```` ```chords ```` / ```` ```chordpro ````: аккорды над текстом
-  (моноширинно, выделены) + **SVG-диаграммы** для известных аккордов (словарь аппликатур + рисовалка).
-- **tasks** (`modules/tasks.js`) — пункты `- [ ] … 📅 дата ⏫ #тег` плагина Tasks → карточки с
-  чекбоксом, бейджами дат/приоритета/тегов (через `postprocessHtml`).
+Хуки модуля (все опциональны): `fence`, `postprocessHtml`, `renderFull(md,ctx)` (замена всей заметки),
+`preprocess(md,ctx)` (async; через `ctx.hold(html)` кладёт плейсхолдер, через `ctx.addHead(str)` —
+теги в `<head>`), `css`, `head`. Конвейер `renderNote` — **async**; ctx = `{app, sourcePath, frontmatter, hold, addHead}`.
+Результат `{html, css, head}` уходит в функцию, та кладёт css в `<style>`, head — в `<head>`.
+
+Встроенные модули (`src/modules/`):
+- **chords** — ```` ```chords/```chordpro ````: аккорды над текстом + SVG-диаграммы (словарь аппликатур). 🆔 obsidian-plugin-13
+- **tasks** — пункты Tasks `- [ ] … 📅 ⏫ #тег` → карточки с бейджами (`postprocessHtml`). 🆔 obsidian-plugin-14
+- **callouts** — `> [!type] …` → цветные боксы с иконкой (`postprocessHtml`). 🆔 obsidian-plugin-15
+- **kanban** — заметка-доска (`kanban-plugin`/`kanban:settings`) → колонки с карточками (`renderFull`). 🆔 obsidian-plugin-16
+- **math** — `$…$`/`$$…$$` защищаются плейсхолдерами + KaTeX auto-render с CDN в `<head>` (`preprocess`+`addHead`). 🆔 obsidian-plugin-17
+- **dataview** — ```` ```dataview ````: запрос выполняется при публикации через `app…dataview.api.queryMarkdown`, 🆔 obsidian-plugin-18
+  результат вставляется статикой (`preprocess`, async). `dataviewjs` не поддерживается (заглушка).
+- **excalidraw** — `![[…​.excalidraw]]` экспортируется в SVG через `ExcalidrawAutomate.createSVG` (`preprocess`, async). 🆔 obsidian-plugin-19
+
+> dataview/excalidraw требуют установленных плагинов и живого Obsidian (API); при отсутствии — аккуратная заглушка.
 
 ## QR-код (`loadQr`/`makeQr`, `QrModal`)
 
@@ -109,9 +120,9 @@ HTML формируется **в плагине** (не в YC): `renderNote(mark
 
 ## Ограничения / TODO
 
-- Прочий Obsidian-синтаксис (`[[wikilinks]]`, callouts) рендерится `markdown-it` как текст.
-- `data.json`/токен в открытом виде (как у большинства плагинов).
-- Большая папка = много вызовов функции (в пределах free-tier); идёт пулом с прогрессом.
+- Прочий Obsidian-синтаксис (`[[wikilinks]]`, callouts) рендерится `markdown-it` как текст. 🆔 obsidian-plugin-20
+- `data.json`/токен в открытом виде (как у большинства плагинов). 🆔 obsidian-plugin-21
+- Большая папка = много вызовов функции (в пределах free-tier); идёт пулом с прогрессом. 🆔 obsidian-plugin-22
 
 ## Установка вручную
 

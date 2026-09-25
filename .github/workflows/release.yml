@@ -1,0 +1,40 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Собираем самодостаточный main.js из src (вшивает qrcode, markdown-it, модули, шаблоны)
+      - name: Build bundle
+        run: node src/build.js main.js
+
+      - name: Verify manifest version matches tag
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          ver="$(node -p "require('./manifest.json').version")"
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag ($tag) != manifest version ($ver)"; exit 1
+          fi
+
+      - name: Create GitHub release with plugin assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          gh release create "$tag" main.js manifest.json versions.json \
+            --title "$tag" --notes "Automated release $tag" \
+          || gh release upload "$tag" main.js manifest.json versions.json --clobber

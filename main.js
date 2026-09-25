@@ -2423,6 +2423,24 @@ var CHORDS_MODULE = (function () {
 })();
 
 
+/* render module: modules/mermaid.js */
+// Render module: Mermaid-диаграммы (```mermaid). Рендерятся Mermaid.js с CDN в браузере зрителя.
+var MERMAID_MODULE = (function () {
+  var HEAD = '<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,securityLevel:"strict"});</scr' + 'ipt>';
+  function esc(s) { return String(s).replace(/[&<>]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]; }); }
+  return {
+    id: 'mermaid',
+    fence: function (info, content, ctx) {
+      var lang = (info || '').trim().split(/\s+/)[0].toLowerCase();
+      if (lang !== 'mermaid') return null;
+      if (ctx && ctx.addHead) ctx.addHead(HEAD);
+      return '<pre class="mermaid">' + esc(content) + '</pre>';
+    },
+    css: '.mermaid{margin:1em 0;text-align:center;background:#fff;overflow-x:auto}'
+  };
+})();
+
+
 /* render module: modules/tasks.js */
 // Render module: задачи плагина Tasks.
 // Преобразует пункты списка вида "- [ ] текст 📅 2026-09-26 ⏫ #tag" в красивые карточки.
@@ -3211,6 +3229,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     const add = (m) => { if (typeof m !== 'undefined' && m) this.renderModules.push(m); };
     // порядок: fence/postprocess нейтральны; preprocess идёт dataview→excalidraw→math
     add(typeof CHORDS_MODULE !== 'undefined' ? CHORDS_MODULE : undefined);
+    add(typeof MERMAID_MODULE !== 'undefined' ? MERMAID_MODULE : undefined);
     add(typeof TASKS_MODULE !== 'undefined' ? TASKS_MODULE : undefined);
     add(typeof CALLOUTS_MODULE !== 'undefined' ? CALLOUTS_MODULE : undefined);
     add(typeof KANBAN_MODULE !== 'undefined' ? KANBAN_MODULE : undefined);

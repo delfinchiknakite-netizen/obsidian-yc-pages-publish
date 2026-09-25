@@ -190,6 +190,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     const add = (m) => { if (typeof m !== 'undefined' && m) this.renderModules.push(m); };
     // порядок: fence/postprocess нейтральны; preprocess идёт dataview→excalidraw→math
     add(typeof CHORDS_MODULE !== 'undefined' ? CHORDS_MODULE : undefined);
+    add(typeof MERMAID_MODULE !== 'undefined' ? MERMAID_MODULE : undefined);
     add(typeof TASKS_MODULE !== 'undefined' ? TASKS_MODULE : undefined);
     add(typeof CALLOUTS_MODULE !== 'undefined' ? CALLOUTS_MODULE : undefined);
     add(typeof KANBAN_MODULE !== 'undefined' ? KANBAN_MODULE : undefined);

@@ -22,7 +22,7 @@ const VENDORS = [
   ['markdownit', 'markdown-it.js'],
 ];
 const MODULES = [
-  'modules/chords.js', 'modules/tasks.js', 'modules/callouts.js',
+  'modules/chords.js', 'modules/mermaid.js', 'modules/tasks.js', 'modules/callouts.js',
   'modules/kanban.js', 'modules/dataview.js', 'modules/excalidraw.js', 'modules/math.js',
 ];
 

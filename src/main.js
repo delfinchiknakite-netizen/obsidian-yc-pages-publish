@@ -65,7 +65,41 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
       },
     });
 
+    // Удаление публикации по клику в журнале: obsidian://yc-pages-delete?u=<url>
+    this.registerObsidianProtocolHandler('yc-pages-delete', (params) => {
+      const url = params.u || params.url;
+      if (!url) return;
+      if (!this.settingsReady()) return;
+      new ConfirmModal(this.app, {
+        title: 'Удалить публикацию?',
+        body: (params.t ? '«' + params.t + '»\n' : '') + url,
+        onConfirm: () => this.deletePublication(url),
+      }).open();
+    });
+
     this.addSettingTab(new YcPagesSettingTab(this.app, this));
+  }
+
+  async deletePublication(url) {
+    const notice = new Notice('Удаление…', 0);
+    const r = await this.api({ action: 'delete', url });
+    notice.hide();
+    if (r.ok) {
+      await this.removeLinkRow(url);
+      new Notice('Удалено (' + (r.data.deleted || 0) + ' файлов)');
+    } else {
+      new Notice('Ошибка удаления: ' + r.error, 8000);
+    }
+  }
+
+  async removeLinkRow(url) {
+    try {
+      const path = (this.settings.linksNote || 'Ссылка на сайты.md').trim();
+      const file = this.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return;
+      const rows = parseLinkRows(await this.app.vault.read(file)).filter((r) => r.url !== url);
+      await this.app.vault.modify(file, buildLinkNote(rows));
+    } catch (e) { console.warn('[yc-pages] removeLinkRow', e); }
   }
 
   makeQr(url, cell) {
@@ -541,10 +575,12 @@ function parseLinkRows(text) {
 }
 
 function buildLinkNote(rows) {
-  const head = '# Ссылки на сайты\n\n> Обновляется автоматически плагином YC Pages. Истёкшие ссылки удаляются при создании новых.\n\n| Сайт | QR | Создано | TTL | Истекает |\n|---|---|---|---|---|\n';
-  const body = rows.map((r) =>
-    '| [' + String(r.title).replace(/[[\]|]/g, ' ').trim() + '](' + r.url + ') | ' + (r.qr || '') + ' | ' + r.createdStr + ' | ' + r.ttlStr + ' | ' + r.expiresStr + ' |'
-  ).join('\n');
+  const head = '# Ссылки на сайты\n\n> Обновляется автоматически плагином YC Pages. Истёкшие ссылки удаляются при создании новых. 🗑 — удалить публикацию.\n\n| Сайт | QR | Создано | TTL | Истекает | 🗑 |\n|---|---|---|---|---|---|\n';
+  const body = rows.map((r) => {
+    const title = String(r.title).replace(/[[\]|]/g, ' ').trim();
+    const del = '[🗑](obsidian://yc-pages-delete?u=' + encodeURIComponent(r.url) + '&t=' + encodeURIComponent(title) + ')';
+    return '| [' + title + '](' + r.url + ') | ' + (r.qr || '') + ' | ' + r.createdStr + ' | ' + r.ttlStr + ' | ' + r.expiresStr + ' | ' + del + ' |';
+  }).join('\n');
   return head + body + (body ? '\n' : '');
 }
 
@@ -629,6 +665,21 @@ class PublishModal extends Modal {
     actions.addButton((b) => b.setButtonText('Закрыть').setCta().onClick(() => this.close()));
   }
 
+  onClose() { this.contentEl.empty(); }
+}
+
+// Подтверждение действия
+class ConfirmModal extends Modal {
+  constructor(app, opts) { super(app); this.opts = opts; }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h3', { text: this.opts.title || 'Подтвердите' });
+    if (this.opts.body) contentEl.createEl('p', { text: this.opts.body, cls: 'setting-item-description' });
+    new Setting(contentEl)
+      .addButton((b) => b.setButtonText('Удалить').setWarning().onClick(() => { this.close(); this.opts.onConfirm && this.opts.onConfirm(); }))
+      .addButton((b) => b.setButtonText('Отмена').onClick(() => this.close()));
+  }
   onClose() { this.contentEl.empty(); }
 }
 

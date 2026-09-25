@@ -40,6 +40,7 @@ exports.handler = async (event) => {
   try {
     switch (body.action || 'page') {
       case 'bootstrap':   return await bootstrap(body);
+      case 'delete':      return await deletePublication(body);
       case 'page':        return await createPage(body);
       case 'site-init':   return await initSite(body);
       case 'site-folder': return await writeFolder(body);
@@ -72,6 +73,34 @@ async function bootstrap(body) {
   created.push('index.html', 'error.html', 'new.html');
 
   return resp(200, { ok: true, created, site: SITE_URL + '/' });
+}
+
+// ---------- action: delete (удалить публикацию по URL) ----------
+async function deletePublication(body) {
+  const url = String(body.url || '');
+  let prefix = url.replace(SITE_URL, '').replace(/^\//, '');
+  if (!/^(p|s)\/\d+\/[a-f0-9]+\/?$/i.test(prefix)) return resp(400, { error: 'bad url' });
+  if (!prefix.endsWith('/')) prefix += '/';
+
+  let deleted = 0;
+  let token;
+  do {
+    const list = await s3.listObjectsV2({ Bucket: BUCKET, Prefix: prefix, ContinuationToken: token }).promise();
+    const objs = (list.Contents || []).map((o) => ({ Key: o.Key }));
+    if (objs.length) { await s3.deleteObjects({ Bucket: BUCKET, Delete: { Objects: objs } }).promise(); deleted += objs.length; }
+    token = list.IsTruncated ? list.NextContinuationToken : null;
+  } while (token);
+
+  // убрать из manifest.json
+  try {
+    const obj = await s3.getObject({ Bucket: BUCKET, Key: 'manifest.json' }).promise();
+    const manifest = JSON.parse(obj.Body.toString('utf-8'));
+    const nowIso = new Date().toISOString();
+    manifest.pages = (manifest.pages || []).filter((p) => p.url !== url && p.expiresAt > nowIso);
+    await putObj('manifest.json', JSON.stringify(manifest, null, 2), 'application/json', 'no-cache');
+  } catch (e) { /* нет манифеста — ок */ }
+
+  return resp(200, { ok: true, deleted });
 }
 
 // ---------- action: page (одиночная страница) ----------

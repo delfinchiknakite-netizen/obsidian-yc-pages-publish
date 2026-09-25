@@ -2895,12 +2895,19 @@ function pageDocument(title, contentHtml, extraCss, extraHead, backLink) {
   return '<!doctype html>\n<html lang="ru">\n<head>\n' +
     '<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
     '<title>' + ycpEscHtml(title) + '</title>\n<style>\n' +
-    '  body{max-width:760px;margin:40px auto;padding:0 16px;font:16px/1.6 -apple-system,system-ui,sans-serif;color:#222}\n' +
-    '  img{max-width:100%}\n' +
+    '  body{max-width:760px;margin:40px auto;padding:0 16px;font:16px/1.6 -apple-system,system-ui,sans-serif;color:#222;word-wrap:break-word}\n' +
+    '  h1,h2,h3,h4{line-height:1.25;margin:1.4em 0 .5em}\n  h1{font-size:1.8em} h2{font-size:1.45em;border-bottom:1px solid #eee;padding-bottom:.2em} h3{font-size:1.2em}\n' +
+    '  img{max-width:100%;border-radius:6px}\n' +
     '  pre{background:#f5f5f5;padding:12px;overflow:auto;border-radius:6px;white-space:pre}\n' +
-    '  code{background:#f5f5f5;padding:2px 4px;border-radius:4px}\n' +
+    '  code{background:#f5f5f5;padding:2px 5px;border-radius:4px;font-size:.92em}\n' +
     '  pre code{background:none;padding:0}\n' +
     '  a{color:#0a58ca}\n' +
+    '  mark{background:#fff3a3;padding:0 2px;border-radius:3px}\n' +
+    '  blockquote{margin:1em 0;padding:.2em 1em;border-left:4px solid #d9dee5;color:#555}\n' +
+    '  hr{border:none;border-top:1px solid #e3e6ea;margin:2em 0}\n' +
+    '  table{border-collapse:collapse;margin:1em 0;display:block;overflow-x:auto}\n' +
+    '  th,td{border:1px solid #e3e6ea;padding:6px 12px;text-align:left}\n  th{background:#f4f5f7}\n  tr:nth-child(2n) td{background:#fafbfc}\n' +
+    '  ul,ol{padding-left:1.5em} li{margin:.15em 0}\n  del{color:#999}\n  kbd{background:#eee;border:1px solid #ccc;border-radius:4px;padding:0 5px;font-size:.85em}\n' +
     (extraCss || '') + '\n</style>\n' + (extraHead || '') + '\n</head>\n<body>\n' +
     (backLink || '') + '\n' + contentHtml + '\n</body>\n</html>';
 }
@@ -3213,7 +3220,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
 
     const self = this;
     if (typeof markdownit !== 'undefined') {
-      this.md = markdownit({ html: false, linkify: true, breaks: true });
+      this.md = markdownit({ html: false, linkify: true, breaks: true, typographer: true });
+      installMarkdownExtras(this.md);
       const defaultFence = this.md.renderer.rules.fence
         || function (tokens, idx, options, env, slf) { return slf.renderToken(tokens, idx, options); };
       this.md.renderer.rules.fence = function (tokens, idx, options, env, slf) {
@@ -3594,6 +3602,29 @@ function collectImages(app, sourceFile, mdText) {
   return { markdown: out, images };
 }
 
+
+// доп. markdown-разметка: ==подсветка== (остальное — таблицы, ~~зачёркивание~~, цитаты и т.д. — уже в markdown-it)
+function installMarkdownExtras(md) {
+  md.inline.ruler.before('emphasis', 'ycpmark', function (state, silent) {
+    const s = state.src;
+    const start = state.pos;
+    if (s.charCodeAt(start) !== 0x3D || s.charCodeAt(start + 1) !== 0x3D) return false;
+    const end = s.indexOf('==', start + 2);
+    if (end < 0) return false;
+    const content = s.slice(start + 2, end);
+    if (!content || content.indexOf('\n') >= 0) return false;
+    if (!silent) {
+      state.push('ycpmark_open', 'mark', 1);
+      const t = state.push('text', '', 0);
+      t.content = content;
+      state.push('ycpmark_close', 'mark', -1);
+    }
+    state.pos = end + 2;
+    return true;
+  });
+  md.renderer.rules.ycpmark_open = () => '<mark>';
+  md.renderer.rules.ycpmark_close = () => '</mark>';
+}
 
 // fallback, если markdown-it не загрузился
 function escapeForFallback(md) {

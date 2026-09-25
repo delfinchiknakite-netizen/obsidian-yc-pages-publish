@@ -199,7 +199,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
 
     const self = this;
     if (typeof markdownit !== 'undefined') {
-      this.md = markdownit({ html: false, linkify: true, breaks: true });
+      this.md = markdownit({ html: false, linkify: true, breaks: true, typographer: true });
+      installMarkdownExtras(this.md);
       const defaultFence = this.md.renderer.rules.fence
         || function (tokens, idx, options, env, slf) { return slf.renderToken(tokens, idx, options); };
       this.md.renderer.rules.fence = function (tokens, idx, options, env, slf) {
@@ -580,6 +581,29 @@ function collectImages(app, sourceFile, mdText) {
   return { markdown: out, images };
 }
 
+
+// доп. markdown-разметка: ==подсветка== (остальное — таблицы, ~~зачёркивание~~, цитаты и т.д. — уже в markdown-it)
+function installMarkdownExtras(md) {
+  md.inline.ruler.before('emphasis', 'ycpmark', function (state, silent) {
+    const s = state.src;
+    const start = state.pos;
+    if (s.charCodeAt(start) !== 0x3D || s.charCodeAt(start + 1) !== 0x3D) return false;
+    const end = s.indexOf('==', start + 2);
+    if (end < 0) return false;
+    const content = s.slice(start + 2, end);
+    if (!content || content.indexOf('\n') >= 0) return false;
+    if (!silent) {
+      state.push('ycpmark_open', 'mark', 1);
+      const t = state.push('text', '', 0);
+      t.content = content;
+      state.push('ycpmark_close', 'mark', -1);
+    }
+    state.pos = end + 2;
+    return true;
+  });
+  md.renderer.rules.ycpmark_open = () => '<mark>';
+  md.renderer.rules.ycpmark_close = () => '</mark>';
+}
 
 // fallback, если markdown-it не загрузился
 function escapeForFallback(md) {

@@ -68,6 +68,32 @@ command palette          ─┴─► startPublish(file)
 строки с `Истекает < now` удаляются (очистка по текущему времени). Даты — локальные `YYYY-MM-DD HH:mm`
 (`fmtDate`/`parseDate`), `expiresAt` берётся из ответа функции. Ошибка записи журнала не срывает публикацию.
 
+## Рендер HTML в плагине + модули (v1.9)
+
+HTML формируется **в плагине** (не в YC): `renderNote(markdown) → { html, css }`.
+- База — вшитый `markdown-it` (`src/markdown-it.js`, встраивается через build.js).
+- `setupRenderer()` создаёт `this.md` и переопределяет правило `fence`: для каждого
+  ```` ```lang ```` блока опрашивает модули (`m.fence(info, content, ctx)`), первый непустой
+  результат подставляется.
+- После рендера прогоняются `m.postprocessHtml(html, ctx)` каждого модуля.
+- `css` всех модулей склеивается и уходит на сервер вместе с `html`; функция кладёт их в
+  `<style>` страницы (`renderPage(title, html, css)`). Markdown как fallback в функции сохранён.
+
+**Интерфейс модуля** (`src/modules/*.js`, каждый — IIFE, кладёт `var XXX_MODULE`):
+```
+{ id, css?,
+  fence?(info, content, ctx) -> html|null,   // рендер ```lang блока
+  postprocessHtml?(html, ctx) -> html }       // правка готового HTML
+```
+Регистрация: `plugin.registerRenderModule(mod)` (встроенные — в `setupRenderer`).
+Добавить модуль = создать `src/modules/<name>.js`, вписать в `MODULES` в `build.js`, пересобрать.
+
+Встроенные модули:
+- **chords** (`modules/chords.js`) — ```` ```chords ```` / ```` ```chordpro ````: аккорды над текстом
+  (моноширинно, выделены) + **SVG-диаграммы** для известных аккордов (словарь аппликатур + рисовалка).
+- **tasks** (`modules/tasks.js`) — пункты `- [ ] … 📅 дата ⏫ #тег` плагина Tasks → карточки с
+  чекбоксом, бейджами дат/приоритета/тегов (через `postprocessHtml`).
+
 ## QR-код (`loadQr`/`makeQr`, `QrModal`)
 
 Библиотека `qrcode-generator` (MIT) лежит рядом как `qrcode.js` и грузится в рантайме через

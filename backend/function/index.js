@@ -76,8 +76,8 @@ async function bootstrap(body) {
 
 // ---------- action: page (одиночная страница) ----------
 async function createPage(body) {
-  const { title, markdown, ttlDays, images } = body;
-  if (!title || !markdown) return resp(400, { error: 'title and markdown required' });
+  const { title, markdown, html, css, ttlDays, images } = body;
+  if (!title || (markdown == null && html == null)) return resp(400, { error: 'title and (html|markdown) required' });
 
   const ttl = normTtl(ttlDays);
   const slug = rndSlug();
@@ -86,7 +86,8 @@ async function createPage(body) {
   const prefix = `p/${ttl}/${slug}/`;
   const pageUrl = `${SITE_URL}/${prefix}`;
 
-  await putHtml(prefix + 'index.html', renderPage(title, md.render(markdown)));
+  const content = html != null ? html : md.render(markdown);
+  await putHtml(prefix + 'index.html', renderPage(title, content, css));
   await manifestAdd({ type: 'page', slug, title, ttl, url: pageUrl, createdAt: now.toISOString(), expiresAt: expiresAt.toISOString() });
 
   return resp(200, { url: pageUrl, expiresAt: expiresAt.toISOString(), uploads: presignAssets(images, prefix + 'assets/') });
@@ -130,15 +131,16 @@ async function writeFolder(body) {
 
 // ---------- action: site-page (страница заметки внутри дерева) ----------
 async function createSitePage(body) {
-  const { siteSlug, ttlDays, dir, slug, title, markdown, images } = body;
-  if (!siteSlug || dir == null || !slug || !markdown) return resp(400, { error: 'siteSlug, dir, slug, markdown required' });
+  const { siteSlug, ttlDays, dir, slug, title, markdown, html, css, images } = body;
+  if (!siteSlug || dir == null || !slug || (markdown == null && html == null)) return resp(400, { error: 'siteSlug, dir, slug, (html|markdown) required' });
 
   const ttl = normTtl(ttlDays);
   const prefix = `s/${ttl}/${siteSlug}/${dir}${slug}/`;
   const pageUrl = `${SITE_URL}/${prefix}`;
   const back = '<p><a href="../">← к списку</a></p>';
 
-  await putHtml(prefix + 'index.html', renderPage(title || slug, back + md.render(markdown)));
+  const content = html != null ? html : md.render(markdown);
+  await putHtml(prefix + 'index.html', renderPage(title || slug, back + content, css));
 
   return resp(200, { url: pageUrl, uploads: presignAssets(images, prefix + 'assets/') });
 }
@@ -183,7 +185,7 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function renderPage(title, contentHtml) {
+function renderPage(title, contentHtml, extraCss) {
   return `<!doctype html>
 <html lang="ru">
 <head>
@@ -197,6 +199,7 @@ function renderPage(title, contentHtml) {
   code{background:#f5f5f5;padding:2px 4px;border-radius:4px}
   pre code{background:none;padding:0}
   a{color:#0a58ca}
+${extraCss || ''}
 </style>
 </head>
 <body>

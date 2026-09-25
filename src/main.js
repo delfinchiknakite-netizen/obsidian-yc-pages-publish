@@ -17,6 +17,7 @@ const IMG_EXT = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'];
 module.exports = class YcPagesPublishPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
+    this.setupRenderer();
 
     // Меню файла/папки (десктоп — ПКМ; мобайл — долгое нажатие в проводнике)
     this.registerEvent(
@@ -87,6 +88,48 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  // ---- рендер HTML внутри плагина + реестр модулей ----
+  setupRenderer() {
+    this.renderModules = [];
+    if (typeof CHORDS_MODULE !== 'undefined') this.renderModules.push(CHORDS_MODULE);
+    if (typeof TASKS_MODULE !== 'undefined') this.renderModules.push(TASKS_MODULE);
+
+    const self = this;
+    if (typeof markdownit !== 'undefined') {
+      this.md = markdownit({ html: false, linkify: true, breaks: true });
+      const defaultFence = this.md.renderer.rules.fence
+        || function (tokens, idx, options, env, slf) { return slf.renderToken(tokens, idx, options); };
+      this.md.renderer.rules.fence = function (tokens, idx, options, env, slf) {
+        const info = (tokens[idx].info || '').trim();
+        for (const m of self.renderModules) {
+          if (m.fence) {
+            const out = m.fence(info, tokens[idx].content, env || {});
+            if (out != null) return out;
+          }
+        }
+        return defaultFence(tokens, idx, options, env, slf);
+      };
+    } else {
+      this.md = null;
+    }
+  }
+
+  // Публичный API: сторонний код может добавить свой модуль генерации HTML
+  registerRenderModule(mod) {
+    if (mod && this.renderModules) this.renderModules.push(mod);
+  }
+
+  // markdown → { html, css } с прогоном через модули
+  renderNote(markdown, ctx) {
+    if (!this.md) return { html: escapeForFallback(markdown), css: '' };
+    let html = this.md.render(markdown || '', ctx || {});
+    for (const m of this.renderModules) {
+      if (m.postprocessHtml) html = m.postprocessHtml(html, ctx || {});
+    }
+    const css = this.renderModules.map((m) => m.css || '').join('');
+    return { html, css };
+  }
+
   settingsReady() {
     if (!this.settings.apiUrl || !this.settings.token) {
       new Notice('YC Pages: задайте API URL и токен в настройках плагина');
@@ -120,7 +163,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   async publishNote(file, title, body, ttl, onProgress) {
     await this.ensureBootstrap();
     const { markdown, images } = collectImages(this.app, file, body);
-    const r = await this.api({ action: 'page', title, markdown, ttlDays: ttl, images: images.map(imgMeta) });
+    const rendered = this.renderNote(markdown);
+    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, ttlDays: ttl, images: images.map(imgMeta) });
     if (!r.ok) throw new Error(r.error);
     if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, images, r.data.uploads || []); }
     await this.logLink({ title, url: r.data.url, ttl, expiresAt: r.data.expiresAt });
@@ -198,7 +242,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
           if (!r.ok) throw new Error('folder ' + fd.dir + ': ' + r.error);
         } else {
           const p = task.data;
-          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, markdown: p.markdown, images: p.images.map(imgMeta) });
+          const rendered = this.renderNote(p.markdown);
+          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, images: p.images.map(imgMeta) });
           if (!r.ok) throw new Error('page ' + p.slug + ': ' + r.error);
           if (p.images.length) await uploadAssets(app, p.images, r.data.uploads || []);
         }
@@ -381,6 +426,12 @@ function collectImages(app, sourceFile, mdText) {
 }
 
 function imgMeta(i) { return { name: i.name, contentType: i.contentType }; }
+
+// fallback, если markdown-it не загрузился
+function escapeForFallback(md) {
+  const s = String(md || '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  return '<pre>' + s + '</pre>';
+}
 
 async function uploadAssets(app, images, uploads) {
   const byName = {};

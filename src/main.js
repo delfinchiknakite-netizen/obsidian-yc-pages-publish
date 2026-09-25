@@ -1,6 +1,6 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, TFolder, requestUrl } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, TFolder, requestUrl, normalizePath } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
   apiUrl: '',
@@ -94,7 +94,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
 
   async removeLinkRow(url) {
     try {
-      const path = (this.settings.linksNote || 'Ссылка на сайты.md').trim();
+      const path = normalizePath((this.settings.linksNote || 'Ссылка на сайты.md').trim());
       const file = this.app.vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile)) return;
       const rows = parseLinkRows(await this.app.vault.read(file)).filter((r) => r.url !== url);
@@ -230,10 +230,17 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     }).open();
   }
 
-  // Создаёт корневые файлы в бакете один раз (index.html/new.html/error.html)
+  // Создаёт корневые файлы в бакете один раз (index.html/new.html/error.html) — html формирует плагин
+  bootstrapFiles() {
+    return this.api({ action: 'bootstrap', files: [
+      { key: 'index.html', html: rootIndexHtml() },
+      { key: 'new.html', html: rootNewHtml(this.settings.apiUrl) },
+      { key: 'error.html', html: rootErrorHtml() },
+    ] });
+  }
   async ensureBootstrap() {
     if (this.settings.bootstrapped) return;
-    const r = await this.api({ action: 'bootstrap', apiUrl: this.settings.apiUrl });
+    const r = await this.bootstrapFiles();
     if (r.ok) { this.settings.bootstrapped = true; await this.saveSettings(); }
   }
 
@@ -243,7 +250,8 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     const { markdown, images } = collectImages(this.app, file, body);
     const cache = this.app.metadataCache.getFileCache(file);
     const rendered = await this.renderNote(markdown, { app: this.app, sourcePath: file.path, frontmatter: cache && cache.frontmatter });
-    const r = await this.api({ action: 'page', title, html: rendered.html, css: rendered.css, head: rendered.head, ttlDays: ttl, images: images.map(imgMeta) });
+    const doc = pageDocument(title, rendered.html, rendered.css, rendered.head, '');
+    const r = await this.api({ action: 'page', title, html: doc, ttlDays: ttl, images: images.map(imgMeta) });
     if (!r.ok) throw new Error(r.error);
     if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, images, r.data.uploads || []); }
     await this.logLink({ title, url: r.data.url, ttl, expiresAt: r.data.expiresAt });
@@ -317,12 +325,15 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
       const errors = await runPool(tasks, async (task) => {
         if (task.kind === 'folder') {
           const fd = task.data;
-          const r = await this.api({ action: 'site-folder', siteSlug, ttlDays: realTtl, dir: fd.dir, title: fd.title, breadcrumbs: fd.breadcrumbs, folders: fd.folders, notes: fd.notes });
+          const html = siteIndexDocument(fd.title);
+          const data = { title: fd.title, breadcrumbs: fd.breadcrumbs, folders: fd.folders, notes: fd.notes };
+          const r = await this.api({ action: 'site-folder', siteSlug, ttlDays: realTtl, dir: fd.dir, html, data });
           if (!r.ok) throw new Error('folder ' + fd.dir + ': ' + r.error);
         } else {
           const p = task.data;
           const rendered = await this.renderNote(p.markdown, { app, sourcePath: p.path, frontmatter: p.frontmatter });
-          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, title: p.title, html: rendered.html, css: rendered.css, head: rendered.head, images: p.images.map(imgMeta) });
+          const doc = pageDocument(p.title, rendered.html, rendered.css, rendered.head, '<p><a href="../">← к списку</a></p>');
+          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, html: doc, images: p.images.map(imgMeta) });
           if (!r.ok) throw new Error('page ' + p.slug + ': ' + r.error);
           if (p.images.length) await uploadAssets(app, p.images, r.data.uploads || []);
         }
@@ -336,7 +347,7 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   // Журнал ссылок в Obsidian: добавляет запись и удаляет истёкшие
   async logLink(entry) {
     try {
-      const path = (this.settings.linksNote || 'Ссылка на сайты.md').trim();
+      const path = normalizePath((this.settings.linksNote || 'Ссылка на сайты.md').trim());
       const now = new Date();
       const file = this.app.vault.getAbstractFileByPath(path);
 
@@ -743,7 +754,7 @@ class YcPagesSettingTab extends PluginSettingTab {
       .setDesc('Создать корневые файлы (index.html, new.html, error.html) в бакете. Выполняется автоматически при первой публикации; кнопка — чтобы пере-создать вручную.')
       .addButton((b) => b.setButtonText('Инициализировать').onClick(async () => {
         if (!this.plugin.settings.apiUrl || !this.plugin.settings.token) { new Notice('Сначала задайте API URL и токен'); return; }
-        const r = await this.plugin.api({ action: 'bootstrap', apiUrl: this.plugin.settings.apiUrl });
+        const r = await this.plugin.bootstrapFiles();
         if (r.ok) {
           this.plugin.settings.bootstrapped = true;
           await this.plugin.saveSettings();

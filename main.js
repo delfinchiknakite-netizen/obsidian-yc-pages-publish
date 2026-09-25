@@ -2795,12 +2795,19 @@ class PublishModal extends Modal {
     contentEl.empty();
     contentEl.createEl('h3', { text: 'Опубликовано ✓' });
 
-    new Setting(contentEl).setName('Ссылка').addText((t) => {
-      t.setValue(url);
-      t.inputEl.readOnly = true;
-      t.inputEl.style.width = '100%';
-      t.inputEl.onclick = () => t.inputEl.select();
-    });
+    new Setting(contentEl).setName('Ссылка')
+      .addText((t) => {
+        t.setValue(url);
+        t.inputEl.readOnly = true;
+        t.inputEl.style.width = '100%';
+        t.inputEl.onclick = () => t.inputEl.select();
+      })
+      .addExtraButton((b) =>
+        b.setIcon('copy').setTooltip('Скопировать ссылку').onClick(async () => {
+          await copyToClipboard(url);
+          new Notice('Ссылка скопирована');
+        })
+      );
 
     const qrData = this.plugin && this.plugin.makeQr(url, 5);
     if (qrData) {
@@ -2814,16 +2821,8 @@ class PublishModal extends Modal {
     }
 
     const actions = new Setting(contentEl);
-    actions.addButton((b) =>
-      b.setButtonText('Скопировать ссылку').setCta().onClick(async () => {
-        await copyToClipboard(url);
-        new Notice('Ссылка скопирована');
-        b.setButtonText('Скопировано ✓');
-      })
-    );
-    if (qrData) actions.addButton((b) => b.setButtonText('Открыть QR').onClick(() => new QrModal(this.app, url, this.plugin).open()));
     actions.addButton((b) => b.setButtonText('Открыть').onClick(() => window.open(url)));
-    actions.addButton((b) => b.setButtonText('Закрыть').onClick(() => this.close()));
+    actions.addButton((b) => b.setButtonText('Закрыть').setCta().onClick(() => this.close()));
   }
 
   onClose() { this.contentEl.empty(); }

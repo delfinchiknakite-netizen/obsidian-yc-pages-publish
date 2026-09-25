@@ -1,9 +1,0 @@
-{
-  "name": "pages-store",
-  "version": "2.0.0",
-  "description": "YC Cloud Function: storage-only backend for the YC Pages Publish Obsidian plugin",
-  "main": "index.js",
-  "dependencies": {
-    "aws-sdk": "^2.1600.0"
-  }
-}

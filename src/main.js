@@ -3,8 +3,12 @@
 const { Plugin, PluginSettingTab, Setting, Notice, Modal, TFile, TFolder, requestUrl, normalizePath } = require('obsidian');
 
 const DEFAULT_SETTINGS = {
-  apiUrl: '',
-  token: '',
+  s3Endpoint: 'https://storage.yandexcloud.net',
+  s3Region: 'ru-central1',
+  s3Bucket: '',
+  s3AccessKeyId: '',
+  s3SecretAccessKey: '',
+  s3PublicBaseUrl: '',
   defaultTtl: 7,
   concurrency: 5,
   linksNote: 'Ссылка на сайты.md',
@@ -78,17 +82,75 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     });
 
     this.addSettingTab(new YcPagesSettingTab(this.app, this));
+
+    // фоновая очистка истёкших публикаций при запуске
+    this.app.workspace.onLayoutReady(() => {
+      const s3 = this.getS3();
+      if (s3) this.cleanupExpired(s3).catch((e) => console.warn('[yc-pages] cleanup', e));
+    });
+  }
+
+  // --- S3 напрямую (свой бакет, без своего бэкенда) ---
+  getS3() {
+    const s = this.settings;
+    if (!s.s3Endpoint || !s.s3Bucket || !s.s3AccessKeyId || !s.s3SecretAccessKey) return null;
+    return makeS3({
+      endpoint: s.s3Endpoint, region: s.s3Region || 'ru-central1', bucket: s.s3Bucket,
+      accessKeyId: s.s3AccessKeyId, secretAccessKey: s.s3SecretAccessKey,
+      publicBaseUrl: (s.s3PublicBaseUrl || (s.s3Endpoint.replace(/\/$/, '') + '/' + s.s3Bucket)),
+    }, s3RequestUrl);
+  }
+
+  async manifestGet(s3) {
+    try { const t = await s3.get('manifest.json'); return t ? JSON.parse(t) : { pages: [] }; }
+    catch (e) { return { pages: [] }; }
+  }
+  async manifestSave(s3, m) { await s3.put('manifest.json', JSON.stringify(m, null, 2), 'application/json', 'no-cache'); }
+  async manifestAdd(s3, entry) { const m = await this.manifestGet(s3); m.pages = m.pages || []; m.pages.unshift(entry); await this.manifestSave(s3, m); }
+
+  async ensureBootstrap(s3) {
+    if (this.settings.bootstrapped) return;
+    await s3.put('index.html', rootIndexHtml(), 'text/html; charset=utf-8');
+    await s3.put('error.html', rootErrorHtml(), 'text/html; charset=utf-8');
+    if ((await s3.get('manifest.json')) == null) await this.manifestSave(s3, { pages: [] });
+    this.settings.bootstrapped = true;
+    await this.saveSettings();
+  }
+
+  // удаляет истёкшие публикации (файлы + записи manifest); зовётся при загрузке
+  async cleanupExpired(s3) {
+    const m = await this.manifestGet(s3);
+    const now = new Date().toISOString();
+    const live = [];
+    const dead = [];
+    (m.pages || []).forEach((p) => (p.expiresAt > now ? live : dead).push(p));
+    if (!dead.length) return;
+    for (const p of dead) {
+      try { const keys = await s3.list(prefixFromUrl(p.url, s3.publicUrl)); for (const k of keys) await s3.del(k); }
+      catch (e) { console.warn('[yc-pages] cleanup', e); }
+    }
+    m.pages = live;
+    await this.manifestSave(s3, m);
   }
 
   async deletePublication(url) {
+    const s3 = this.getS3();
+    if (!s3) { new Notice('S3 не настроен'); return; }
+    const prefix = prefixFromUrl(url, s3.publicUrl);
+    if (!/^(p|s)\/\d+\/[a-f0-9]+\/$/i.test(prefix)) { new Notice('Некорректный URL'); return; }
     const notice = new Notice('Удаление…', 0);
-    const r = await this.api({ action: 'delete', url });
-    notice.hide();
-    if (r.ok) {
+    try {
+      const keys = await s3.list(prefix);
+      for (const k of keys) await s3.del(k);
+      const m = await this.manifestGet(s3);
+      m.pages = (m.pages || []).filter((p) => p.url !== url);
+      await this.manifestSave(s3, m);
       await this.removeLinkRow(url);
-      new Notice('Удалено (' + (r.data.deleted || 0) + ' файлов)');
-    } else {
-      new Notice('Ошибка удаления: ' + r.error, 8000);
+      notice.hide();
+      new Notice('Удалено (' + keys.length + ' файлов)');
+    } catch (e) {
+      notice.hide();
+      new Notice('Ошибка удаления: ' + (e.message || e), 8000);
     }
   }
 
@@ -209,8 +271,9 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   }
 
   settingsReady() {
-    if (!this.settings.apiUrl || !this.settings.token) {
-      new Notice('YC Pages: задайте API URL и токен в настройках плагина');
+    const s = this.settings;
+    if (!s.s3Endpoint || !s.s3Bucket || !s.s3AccessKeyId || !s.s3SecretAccessKey || !s.s3PublicBaseUrl) {
+      new Notice('YC Pages: заполните настройки S3 (бакет, ключи, публичный URL)');
       return false;
     }
     return true;
@@ -230,32 +293,26 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     }).open();
   }
 
-  // Создаёт корневые файлы в бакете один раз (index.html/new.html/error.html) — html формирует плагин
-  bootstrapFiles() {
-    return this.api({ action: 'bootstrap', files: [
-      { key: 'index.html', html: rootIndexHtml() },
-      { key: 'new.html', html: rootNewHtml(this.settings.apiUrl) },
-      { key: 'error.html', html: rootErrorHtml() },
-    ] });
-  }
-  async ensureBootstrap() {
-    if (this.settings.bootstrapped) return;
-    const r = await this.bootstrapFiles();
-    if (r.ok) { this.settings.bootstrapped = true; await this.saveSettings(); }
-  }
-
   // возвращает URL опубликованной страницы (или бросает исключение)
   async publishNote(file, title, body, ttl, onProgress) {
-    await this.ensureBootstrap();
+    const s3 = this.getS3();
+    if (!s3) throw new Error('S3 не настроен');
+    await this.ensureBootstrap(s3);
     const { markdown, images } = collectImages(this.app, file, body);
     const cache = this.app.metadataCache.getFileCache(file);
     const rendered = await this.renderNote(markdown, { app: this.app, sourcePath: file.path, frontmatter: cache && cache.frontmatter });
     const doc = pageDocument(title, rendered.html, rendered.css, rendered.head, '');
-    const r = await this.api({ action: 'page', title, html: doc, ttlDays: ttl, images: images.map(imgMeta) });
-    if (!r.ok) throw new Error(r.error);
-    if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, images, r.data.uploads || []); }
-    await this.logLink({ title, url: r.data.url, ttl, expiresAt: r.data.expiresAt });
-    return r.data.url;
+
+    const ttlN = normTtlN(ttl);
+    const slug = rndSlug();
+    const prefix = 'p/' + ttlN + '/' + slug + '/';
+    const url = s3.publicUrl + '/' + prefix;
+    await s3.put(prefix + 'index.html', doc, 'text/html; charset=utf-8');
+    if (images.length) { if (onProgress) onProgress('Загрузка картинок…'); await uploadAssets(this.app, s3, images, prefix + 'assets/'); }
+    const expiresAt = new Date(Date.now() + ttlN * 86400000).toISOString();
+    await this.manifestAdd(s3, { type: 'page', slug, title, ttl: ttlN, url, createdAt: new Date().toISOString(), expiresAt });
+    await this.logLink({ title, url, ttl: ttlN, expiresAt });
+    return url;
   }
 
   // ---------- сайт из папки (иерархия = дерево Obsidian) ----------
@@ -275,12 +332,14 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
   // возвращает URL корня сайта (или бросает исключение)
   async buildSite(rootFolder, title, ttl, onProgress) {
     const app = this.app;
-    await this.ensureBootstrap();
-    const init = await this.api({ action: 'site-init', title, ttlDays: ttl });
-    if (!init.ok) throw new Error('site-init: ' + init.error);
-    const siteSlug = init.data.siteSlug;
-    const siteUrl = init.data.url;
-    const realTtl = init.data.ttl || ttl;
+    const s3 = this.getS3();
+    if (!s3) throw new Error('S3 не настроен');
+    await this.ensureBootstrap(s3);
+    const realTtl = normTtlN(ttl);
+    const siteSlug = rndSlug();
+    const siteUrl = s3.publicUrl + '/s/' + realTtl + '/' + siteSlug + '/';
+    const expiresAt = new Date(Date.now() + realTtl * 86400000).toISOString();
+    await this.manifestAdd(s3, { type: 'site', slug: siteSlug, title, ttl: realTtl, url: siteUrl, createdAt: new Date().toISOString(), expiresAt });
 
     if (onProgress) onProgress('Подготовка заметок…');
     const folders = [];
@@ -323,24 +382,24 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
         .concat(pages.map((p) => ({ kind: 'page', data: p })));
 
       const errors = await runPool(tasks, async (task) => {
+        const sitePrefix = 's/' + realTtl + '/' + siteSlug + '/';
         if (task.kind === 'folder') {
           const fd = task.data;
-          const html = siteIndexDocument(fd.title);
-          const data = { title: fd.title, breadcrumbs: fd.breadcrumbs, folders: fd.folders, notes: fd.notes };
-          const r = await this.api({ action: 'site-folder', siteSlug, ttlDays: realTtl, dir: fd.dir, html, data });
-          if (!r.ok) throw new Error('folder ' + fd.dir + ': ' + r.error);
+          const base = sitePrefix + fd.dir;
+          await s3.put(base + 'index.html', siteIndexDocument(fd.title), 'text/html; charset=utf-8');
+          await s3.put(base + 'data.json', JSON.stringify({ title: fd.title, breadcrumbs: fd.breadcrumbs, folders: fd.folders, notes: fd.notes }), 'application/json', 'no-cache');
         } else {
           const p = task.data;
           const rendered = await this.renderNote(p.markdown, { app, sourcePath: p.path, frontmatter: p.frontmatter });
           const doc = pageDocument(p.title, rendered.html, rendered.css, rendered.head, '<p><a href="../">← к списку</a></p>');
-          const r = await this.api({ action: 'site-page', siteSlug, ttlDays: realTtl, dir: p.dir, slug: p.slug, html: doc, images: p.images.map(imgMeta) });
-          if (!r.ok) throw new Error('page ' + p.slug + ': ' + r.error);
-          if (p.images.length) await uploadAssets(app, p.images, r.data.uploads || []);
+          const base = sitePrefix + p.dir + p.slug + '/';
+          await s3.put(base + 'index.html', doc, 'text/html; charset=utf-8');
+          if (p.images.length) await uploadAssets(app, s3, p.images, base + 'assets/');
         }
       }, this.settings.concurrency, (done, total) => { if (onProgress) onProgress('Публикация: ' + done + '/' + total); });
 
       if (errors.length) { console.error('[yc-pages] errors', errors); new Notice('Ошибок: ' + errors.length + ' (см. консоль)', 8000); }
-      await this.logLink({ title, url: siteUrl, ttl: realTtl, expiresAt: init.data.expiresAt });
+      await this.logLink({ title, url: siteUrl, ttl: realTtl, expiresAt });
       return siteUrl;
   }
 
@@ -377,27 +436,33 @@ module.exports = class YcPagesPublishPlugin extends Plugin {
     }
   }
 
-  // ---------- API ----------
-  async api(payload) {
-    try {
-      const res = await requestUrl({
-        url: this.settings.apiUrl,
-        method: 'POST',
-        contentType: 'application/json',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(Object.assign({}, payload, { token: this.settings.token })),
-        throw: false,
-      });
-      const data = res.json || {};
-      if (res.status >= 200 && res.status < 300) return { ok: true, data };
-      return { ok: false, error: data.error || ('HTTP ' + res.status) };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  }
 };
 
 // ======================= helpers =======================
+// Транспорт для S3-клиента поверх requestUrl (обходит CORS).
+async function s3RequestUrl(req) {
+  const body = (req.body && req.body.length)
+    ? req.body.buffer.slice(req.body.byteOffset, req.body.byteOffset + req.body.byteLength)
+    : undefined;
+  const r = await requestUrl({ url: req.url, method: req.method, headers: req.headers, body, throw: false });
+  return { status: r.status, text: () => r.text, arrayBuffer: () => r.arrayBuffer };
+}
+
+function prefixFromUrl(url, publicUrl) {
+  let p = String(url).replace(publicUrl, '').replace(/^\//, '');
+  if (p && !p.endsWith('/')) p += '/';
+  return p;
+}
+
+function rndSlug() {
+  const a = new Uint8Array(5);
+  crypto.getRandomValues(a);
+  let s = '';
+  for (let i = 0; i < a.length; i++) s += a[i].toString(16).padStart(2, '0');
+  return s;
+}
+
+function normTtlN(v) { return [7, 30, 90].includes(Number(v)) ? Number(v) : 30; }
 function inFolder(file, folder) {
   if (folder.isRoot && folder.isRoot()) return true;
   return file.path === folder.path || file.path.startsWith(folder.path + '/');
@@ -515,7 +580,6 @@ function collectImages(app, sourceFile, mdText) {
   return { markdown: out, images };
 }
 
-function imgMeta(i) { return { name: i.name, contentType: i.contentType }; }
 
 // fallback, если markdown-it не загрузился
 function escapeForFallback(md) {
@@ -523,14 +587,11 @@ function escapeForFallback(md) {
   return '<pre>' + s + '</pre>';
 }
 
-async function uploadAssets(app, images, uploads) {
-  const byName = {};
-  images.forEach((i) => { byName[i.name] = i; });
-  for (const u of uploads) {
-    const info = byName[u.name];
-    if (!info) continue;
+// заливает картинки заметки прямо в бакет (prefix = .../assets/)
+async function uploadAssets(app, s3, images, prefix) {
+  for (const info of images) {
     const buf = await app.vault.readBinary(info.file);
-    await requestUrl({ url: u.putUrl, method: 'PUT', body: buf, headers: { 'Content-Type': info.contentType }, throw: false });
+    await s3.put(prefix + info.name, buf, info.contentType);
   }
 }
 
@@ -727,16 +788,26 @@ class YcPagesSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.createEl('h2', { text: 'YC Pages Publish' });
 
-    new Setting(containerEl).setName('API URL').setDesc('Эндпоинт POST /pages вашего API Gateway')
-      .addText((t) => t.setPlaceholder('https://<id>.apigw.yandexcloud.net/pages')
-        .setValue(this.plugin.settings.apiUrl)
-        .onChange(async (v) => { this.plugin.settings.apiUrl = v.trim(); await this.plugin.saveSettings(); }));
+    const s = this.plugin.settings;
+    const field = (name, desc, key, opts) => {
+      opts = opts || {};
+      new Setting(containerEl).setName(name).setDesc(desc).addText((t) => {
+        t.setPlaceholder(opts.ph || '').setValue(s[key] || '')
+          .onChange(async (v) => { s[key] = v.trim(); await this.plugin.saveSettings(); });
+        if (opts.password) t.inputEl.type = 'password';
+        t.inputEl.style.width = '320px';
+      });
+    };
 
-    new Setting(containerEl).setName('Токен').setDesc('Секретный токен (CREATE_TOKEN функции)')
-      .addText((t) => { t.setPlaceholder('токен').setValue(this.plugin.settings.token)
-        .onChange(async (v) => { this.plugin.settings.token = v.trim(); await this.plugin.saveSettings(); });
-        t.inputEl.type = 'password'; });
+    containerEl.createEl('h3', { text: 'S3-хранилище (свой бакет)' });
+    field('Endpoint', 'S3-совместимый эндпоинт (без бакета)', 's3Endpoint', { ph: 'https://storage.yandexcloud.net' });
+    field('Регион', 'Например ru-central1 (или us-east-1 для MinIO)', 's3Region', { ph: 'ru-central1' });
+    field('Бакет', 'Имя бакета со static hosting и публичным чтением', 's3Bucket', { ph: 'my-pages' });
+    field('Access Key ID', 'Ключ доступа сервисного аккаунта', 's3AccessKeyId');
+    field('Secret Access Key', 'Секретный ключ (хранится в vault)', 's3SecretAccessKey', { password: true });
+    field('Публичный URL сайта', 'Адрес static-website хостинга бакета', 's3PublicBaseUrl', { ph: 'https://my-pages.website.yandexcloud.net' });
 
+    containerEl.createEl('h3', { text: 'Публикация' });
     new Setting(containerEl).setName('TTL по умолчанию').setDesc('Предзаполнение в диалоге публикации')
       .addDropdown((d) => { TTL_OPTIONS.forEach((nn) => d.addOption(String(nn), nn + ' дней'));
         d.setValue(String(this.plugin.settings.defaultTtl))
@@ -750,17 +821,17 @@ class YcPagesSettingTab extends PluginSettingTab {
       .addText((t) => t.setPlaceholder('Ссылка на сайты.md').setValue(this.plugin.settings.linksNote)
         .onChange(async (v) => { this.plugin.settings.linksNote = v.trim() || 'Ссылка на сайты.md'; await this.plugin.saveSettings(); }));
 
-    new Setting(containerEl).setName('Инициализация сервиса')
-      .setDesc('Создать корневые файлы (index.html, new.html, error.html) в бакете. Выполняется автоматически при первой публикации; кнопка — чтобы пере-создать вручную.')
+    new Setting(containerEl).setName('Проверить и инициализировать')
+      .setDesc('Создать корневые файлы (index.html, error.html, manifest.json) в бакете и проверить доступ. Выполняется и автоматически при первой публикации.')
       .addButton((b) => b.setButtonText('Инициализировать').onClick(async () => {
-        if (!this.plugin.settings.apiUrl || !this.plugin.settings.token) { new Notice('Сначала задайте API URL и токен'); return; }
-        const r = await this.plugin.bootstrapFiles();
-        if (r.ok) {
-          this.plugin.settings.bootstrapped = true;
-          await this.plugin.saveSettings();
-          new Notice('Готово: ' + ((r.data.created || []).join(', ') || 'уже было'));
-        } else {
-          new Notice('Ошибка: ' + r.error);
+        const s3 = this.plugin.getS3();
+        if (!s3) { new Notice('Заполните настройки S3'); return; }
+        try {
+          this.plugin.settings.bootstrapped = false;
+          await this.plugin.ensureBootstrap(s3);
+          new Notice('Готово: корневые файлы созданы, доступ работает');
+        } catch (e) {
+          new Notice('Ошибка S3: ' + (e.message || e), 8000);
         }
       }));
   }

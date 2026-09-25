@@ -91,7 +91,7 @@ function siteIndexDocument(title) {
 function rootIndexHtml() {
   return '<!doctype html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>Мои страницы</title>\n<style>\n' +
     '  body{max-width:640px;margin:40px auto;padding:0 16px;font:16px/1.6 -apple-system,system-ui,sans-serif;color:#222}\n  h1{margin-bottom:8px} ul{list-style:none;padding:0} li{padding:10px 0;border-bottom:1px solid #eee}\n  a{color:#0a58ca;text-decoration:none} a:hover{text-decoration:underline} small{color:#888}\n  .new{display:inline-block;margin:8px 0 20px;padding:8px 14px;background:#0a58ca;color:#fff;border-radius:6px}\n</style>\n</head>\n<body>\n' +
-    '<h1>Мои страницы</h1>\n<a class="new" href="new.html">+ Создать</a>\n<ul id="list"><li>Загрузка…</li></ul>\n<script>\n' +
+    '<h1>Мои страницы</h1>\n<ul id="list"><li>Загрузка…</li></ul>\n<script>\n' +
     'fetch("manifest.json?_="+Date.now()).then(function(r){return r.json();}).then(function(m){\n' +
     '  var now=new Date().toISOString();var live=(m.pages||[]).filter(function(p){return p.expiresAt>now;});var ul=document.getElementById("list");\n' +
     '  if(!live.length){ul.innerHTML="<li>Пока пусто</li>";return;}\n' +

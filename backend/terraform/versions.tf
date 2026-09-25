@@ -5,8 +5,5 @@ terraform {
     yandex = {
       source = "yandex-cloud/yandex"
     }
-    archive = {
-      source = "hashicorp/archive"
-    }
   }
 }

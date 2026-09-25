@@ -1,18 +1,24 @@
-output "site_url" {
+output "s3_endpoint" {
+  value       = "https://storage.yandexcloud.net"
+  description = "Endpoint для настроек плагина"
+}
+
+output "s3_bucket" {
+  value = yandex_storage_bucket.pages.bucket
+}
+
+output "s3_public_base_url" {
   value       = local.site_url
-  description = "Главная страница со списком"
+  description = "Публичный URL сайта (static hosting)"
 }
 
-output "new_page_form" {
-  value       = "${local.site_url}/new.html"
-  description = "Форма создания страницы"
+output "s3_access_key_id" {
+  value       = yandex_iam_service_account_static_access_key.pages.access_key
+  description = "Access Key ID для настроек плагина"
 }
 
-output "api_url" {
-  value       = local.api_url
-  description = "Эндпоинт создания (POST)"
-}
-
-output "service_account_id" {
-  value = yandex_iam_service_account.pages.id
+output "s3_secret_access_key" {
+  value       = yandex_iam_service_account_static_access_key.pages.secret_key
+  sensitive   = true
+  description = "Secret Access Key (terraform output -raw s3_secret_access_key)"
 }

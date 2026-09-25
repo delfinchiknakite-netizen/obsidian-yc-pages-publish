@@ -1,0 +1,24 @@
+openapi: 3.0.0
+info:
+  title: pages-api
+  version: "1.0"
+paths:
+  /pages:
+    post:
+      operationId: createPage
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${function_id}
+        service_account_id: ${service_account_id}
+      responses:
+        "200":
+          description: created
+    options:
+      operationId: optionsPage
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: ${function_id}
+        service_account_id: ${service_account_id}
+      responses:
+        "204":
+          description: cors preflight

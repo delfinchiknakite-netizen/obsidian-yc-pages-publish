@@ -1,0 +1,4 @@
+cloud_id     = "b1g3e06kebp6mccjn2qo"
+folder_id    = "b1gi871gt99cjlfgjjt8"
+bucket_name  = "pages-CHANGEME"          # глобально уникальное имя
+create_token = "СГЕНЕРИРУЙ: openssl rand -hex 16"

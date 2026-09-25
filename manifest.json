@@ -1,0 +1,10 @@
+{
+  "id": "yc-pages-publish",
+  "name": "YC Pages Publish",
+  "version": "1.8.0",
+  "minAppVersion": "1.4.0",
+  "description": "Publish notes and folders as temporary (TTL) websites on Yandex Cloud Object Storage — with images, folder navigation, filters and QR codes.",
+  "author": "avtarasov210",
+  "authorUrl": "https://github.com/delfinchiknakite-netizen/obsidian-yc-pages-publish",
+  "isDesktopOnly": false
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Мои страницы</title>
+<style>
+  body{max-width:640px;margin:40px auto;padding:0 16px;font:16px/1.6 -apple-system,system-ui,sans-serif;color:#222}
+  h1{margin-bottom:8px}
+  ul{list-style:none;padding:0}
+  li{padding:10px 0;border-bottom:1px solid #eee}
+  a{color:#0a58ca;text-decoration:none}
+  a:hover{text-decoration:underline}
+  small{color:#888}
+  .new{display:inline-block;margin:8px 0 20px;padding:8px 14px;background:#0a58ca;color:#fff;border-radius:6px}
+</style>
+</head>
+<body>
+<h1>Мои страницы</h1>
+<a class="new" href="new.html">+ Создать</a>
+<ul id="list"><li>Загрузка…</li></ul>
+<script>
+fetch('manifest.json?_=' + Date.now())
+  .then(function (r) { return r.json(); })
+  .then(function (m) {
+    var now = new Date().toISOString();
+    var live = (m.pages || []).filter(function (p) { return p.expiresAt > now; });
+    var ul = document.getElementById('list');
+    if (!live.length) { ul.innerHTML = '<li>Пока пусто</li>'; return; }
+    ul.innerHTML = live.map(function (p) {
+      var days = Math.max(0, Math.ceil((new Date(p.expiresAt) - new Date()) / 86400000));
+      return '<li><a href="' + p.url + '">' + esc(p.title) + '</a> ' +
+             '<small>— сгорит через ' + days + ' дн.</small></li>';
+    }).join('');
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  })
+  .catch(function () {
+    document.getElementById('list').innerHTML = '<li>Ошибка загрузки списка</li>';
+  });
+</script>
+</body>
+</html>

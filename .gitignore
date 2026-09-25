@@ -1,0 +1,11 @@
+data.json
+node_modules/
+.DS_Store
+# terraform
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+backend/**/function.zip
+backend/terraform/*.filled.*

@@ -1,7 +1,7 @@
 {
   "id": "yc-pages-publish",
   "name": "YC Pages Publish",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "1.4.0",
   "description": "Publish notes and folders as temporary (TTL) websites on S3-compatible object storage, with images, folder navigation, filters and QR codes.",
   "author": "avtarasov210",
